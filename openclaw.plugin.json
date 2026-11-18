@@ -20,6 +20,21 @@
       "baseUrl": {
         "type": "string",
         "description": "Langfuse host. Falls back to LANGFUSE_BASE_URL, then https://cloud.langfuse.com."
+      },
+      "experiments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "allowedAgents": {
+            "type": "array", "minItems": 1, "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
+            "default": ["main"]
+          },
+          "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 600000, "default": 120000 },
+          "maxConcurrentRuns": { "type": "integer", "minimum": 1, "maximum": 32, "default": 4 }
+        },
+        "description": "Opt-in SDK experiment endpoint. Requires OpenClaw's plugin runEmbeddedAgent and in-memory session APIs."
       }
     }
   }

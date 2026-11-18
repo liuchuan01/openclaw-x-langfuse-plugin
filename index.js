@@ -32,6 +32,7 @@ import {
 } from "@langfuse/tracing";
 import { createTraceEngine } from "./tracer.js";
 import { makeContentResolver, makeToolIOResolver } from "./transcript.js";
+import { createExperiments } from "./experiments.js";
 
 const DEFAULT_BASE_URL = "https://cloud.langfuse.com";
 
@@ -53,7 +54,7 @@ function resolveConfig(pluginConfig) {
   };
 }
 
-function createLangfuseBridgeService(getPluginConfig) {
+function createLangfuseBridgeService(getPluginConfig, experiments) {
   /** @type {import("@opentelemetry/sdk-trace-node").NodeTracerProvider | null} */
   let provider = null;
   /** @type {import("@langfuse/otel").LangfuseSpanProcessor | null} */
@@ -80,7 +81,7 @@ function createLangfuseBridgeService(getPluginConfig) {
         return;
       }
 
-      if (!isDiagnosticsEnabled(ctx.config)) {
+      if (!isDiagnosticsEnabled(ctx.config) && !experiments) {
         ctx.logger.warn(
           "langfuse-bridge: diagnostics are disabled (config.diagnostics.enabled === false); no events will be emitted, not starting",
         );
@@ -95,6 +96,7 @@ function createLangfuseBridgeService(getPluginConfig) {
       setLangfuseTracerProvider(provider);
 
       const tracing = { startObservation };
+      experiments?.start(tracing);
 
       // Prompt/response text and tool args/results are not delivered to
       // third-party plugins (they're private data given only to bundled
@@ -113,7 +115,11 @@ function createLangfuseBridgeService(getPluginConfig) {
       // (event, metadata) => void. We only need the event body; the engine
       // ignores unrelated event types and catches its own errors, so it never
       // throws into the bus.
-      unsubscribe = onInternalDiagnosticEvent((evt) => engine?.handle(evt));
+      unsubscribe = onInternalDiagnosticEvent((evt) => {
+        // Evaluation hooks already emit these runs with the caller's context.
+        // Do not also reconstruct an unrelated trace from the diagnostic bus.
+        if (!experiments?.ownsDiagnostic(evt)) engine?.handle(evt);
+      });
 
       // Idle reaper: ends observations orphaned by dropped start/complete events
       // (these event types are async-queued and droppable under load). Unref'd
@@ -127,6 +133,7 @@ function createLangfuseBridgeService(getPluginConfig) {
     },
 
     async stop() {
+      await experiments?.stop();
       try {
         unsubscribe?.();
       } finally {
@@ -170,6 +177,9 @@ export default definePluginEntry({
   name: "Langfuse Bridge",
   description: "Forwards OpenClaw model usage diagnostics to Langfuse",
   register(api) {
-    api.registerService(createLangfuseBridgeService(() => api.pluginConfig));
+    const experiments = api.pluginConfig?.experiments?.enabled
+      ? createExperiments(api, api.pluginConfig.experiments)
+      : undefined;
+    api.registerService(createLangfuseBridgeService(() => api.pluginConfig, experiments));
   },
 });
